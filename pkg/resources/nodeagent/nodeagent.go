@@ -60,7 +60,7 @@ func NodeAgentFluentbitDefaults(userDefined **v1beta1.NodeAgent) (*v1beta1.NodeA
 							Containers: []v1.Container{
 								{
 									Name:            containerName,
-									Image:           "fluent/fluent-bit:1.7.3",
+									Image:           "fluent/fluent-bit:1.7.9",
 									Command:         []string{"/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/conf_operator/fluent-bit.conf"},
 									ImagePullPolicy: v1.PullIfNotPresent,
 									Resources: v1.ResourceRequirements{
@@ -230,13 +230,6 @@ var NodeAgentFluentbitWindowsDefaults = &v1beta1.NodeAgent{
 							}},
 						NodeSelector: map[string]string{
 							"kubernetes.io/os": "windows",
-						},
-						Tolerations: []v1.Toleration{{
-							Key:      "node.kubernetes.io/os",
-							Operator: "Equal",
-							Value:    "windows",
-							Effect:   "NoSchedule",
-						},
 						},
 					}},
 			}},

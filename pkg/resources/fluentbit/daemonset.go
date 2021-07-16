@@ -83,7 +83,7 @@ func (r *Reconciler) daemonSet() (runtime.Object, reconciler.DesiredState, error
 					Containers: []corev1.Container{
 						{
 							Name:            containerName,
-							Image:           r.Logging.Spec.FluentbitSpec.Image.Repository + ":" + r.Logging.Spec.FluentbitSpec.Image.Tag,
+							Image:           r.Logging.Spec.FluentbitSpec.Image.RepositoryWithTag(),
 							ImagePullPolicy: corev1.PullPolicy(r.Logging.Spec.FluentbitSpec.Image.PullPolicy),
 							Ports:           containerPorts,
 							Resources:       r.Logging.Spec.FluentbitSpec.Resources,
@@ -96,6 +96,7 @@ func (r *Reconciler) daemonSet() (runtime.Object, reconciler.DesiredState, error
 								Privileged:               r.Logging.Spec.FluentbitSpec.Security.SecurityContext.Privileged,
 								SELinuxOptions:           r.Logging.Spec.FluentbitSpec.Security.SecurityContext.SELinuxOptions,
 							},
+							Env:            r.Logging.Spec.FluentbitSpec.EnvVars,
 							LivenessProbe:  r.Logging.Spec.FluentbitSpec.LivenessProbe,
 							ReadinessProbe: r.Logging.Spec.FluentbitSpec.ReadinessProbe,
 						},

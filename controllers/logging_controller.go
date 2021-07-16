@@ -30,7 +30,6 @@ import (
 	"github.com/banzaicloud/operator-tools/pkg/secret"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,11 +66,11 @@ type LoggingReconciler struct {
 // +kubebuilder:rbac:groups="";events.k8s.io,resources=events,verbs=create;get;list;watch
 // +kubebuilder:rbac:groups="rbac.authorization.k8s.io",resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=*
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile logging resources
-func (r *LoggingReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	ctx := context.Background()
-
+func (r *LoggingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.WithValues("logging", req.NamespacedName)
 
 	var logging loggingv1beta1.Logging
@@ -176,47 +175,40 @@ func (f *secretLoaderFactory) OutputSecretLoaderForNamespace(namespace string) s
 
 // SetupLoggingWithManager setup logging manager
 func SetupLoggingWithManager(mgr ctrl.Manager, logger logr.Logger) *ctrl.Builder {
-	requestMapper := &handler.EnqueueRequestsFromMapFunc{
-		ToRequests: handler.ToRequestsFunc(func(mapObject handler.MapObject) []reconcile.Request {
-			object, err := meta.Accessor(mapObject.Object)
-			if err != nil {
-				return nil
-			}
-			// get all the logging resources from the cache
-			var loggingList loggingv1beta1.LoggingList
-			if err := mgr.GetCache().List(context.TODO(), &loggingList); err != nil {
-				logger.Error(err, "failed to list logging resources")
-				return nil
-			}
-
-			switch o := object.(type) {
-			case *loggingv1beta1.ClusterOutput:
-				return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
-			case *loggingv1beta1.Output:
-				return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
-			case *loggingv1beta1.Flow:
-				return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
-			case *loggingv1beta1.ClusterFlow:
-				return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
-			case *corev1.Secret:
-				r := regexp.MustCompile("logging.banzaicloud.io/(.*)")
-				var requestList []reconcile.Request
-				for key := range o.Annotations {
-					result := r.FindStringSubmatch(key)
-					if len(result) > 1 {
-						loggingRef := result[1]
-						// When loggingRef is "default" we also trigger for the empty ("") loggingRef as well, because the empty string cannot be used in the annotation, thus "default" refers to the empty case.
-						if loggingRef == "default" {
-							requestList = append(requestList, reconcileRequestsForLoggingRef(loggingList.Items, "")...)
-						}
-						requestList = append(requestList, reconcileRequestsForLoggingRef(loggingList.Items, loggingRef)...)
-					}
-				}
-				return requestList
-			}
+	requestMapper := handler.EnqueueRequestsFromMapFunc(func(obj client.Object) []reconcile.Request {
+		// get all the logging resources from the cache
+		var loggingList loggingv1beta1.LoggingList
+		if err := mgr.GetCache().List(context.TODO(), &loggingList); err != nil {
+			logger.Error(err, "failed to list logging resources")
 			return nil
-		}),
-	}
+		}
+
+		switch o := obj.(type) {
+		case *loggingv1beta1.ClusterOutput:
+			return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
+		case *loggingv1beta1.Output:
+			return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
+		case *loggingv1beta1.Flow:
+			return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
+		case *loggingv1beta1.ClusterFlow:
+			return reconcileRequestsForLoggingRef(loggingList.Items, o.Spec.LoggingRef)
+		case *corev1.Secret:
+			r := regexp.MustCompile("logging.banzaicloud.io/(.*)")
+			var requestList []reconcile.Request
+			for key := range o.Annotations {
+				if result := r.FindStringSubmatch(key); len(result) > 1 {
+					loggingRef := result[1]
+					// When loggingRef is "default" we also trigger for the empty ("") loggingRef as well, because the empty string cannot be used in the annotation, thus "default" refers to the empty case.
+					if loggingRef == "default" {
+						requestList = append(requestList, reconcileRequestsForLoggingRef(loggingList.Items, "")...)
+					}
+					requestList = append(requestList, reconcileRequestsForLoggingRef(loggingList.Items, loggingRef)...)
+				}
+			}
+			return requestList
+		}
+		return nil
+	})
 
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&loggingv1beta1.Logging{}).

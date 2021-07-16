@@ -28,17 +28,20 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	crdv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 )
 
 const (
-	Image            = "ghcr.io/banzaicloud/logging-operator:3.9.4"
+	Image            = "ghcr.io/banzaicloud/logging-operator:3.12.0"
 	defaultNamespace = "logging-system"
 )
 
@@ -51,6 +54,9 @@ type ComponentConfig struct {
 	WorkloadMetaOverrides *types.MetaBase      `json:"workloadMetaOverrides,omitempty"`
 	WorkloadOverrides     *types.PodSpecBase   `json:"workloadOverrides,omitempty"`
 	ContainerOverrides    *types.ContainerBase `json:"containerOverrides,omitempty"`
+	WatchNamespace        string               `json:"watchNamespace,omitempty"`
+	WatchLoggingName      string               `json:"watchLoggingName,omitempty"`
+	DisableWebhook        bool                 `json:"-"`
 }
 
 func (c *ComponentConfig) IsEnabled() bool {
@@ -67,7 +73,7 @@ func (c *ComponentConfig) build(parent reconciler.ResourceOwner, fn func(reconci
 	})
 }
 
-func ResourceBuilders(parent reconciler.ResourceOwner, object interface{}) []reconciler.ResourceBuilder {
+func ResourceBuilders(parent reconciler.ResourceOwner, object interface{}) (resources []reconciler.ResourceBuilder) {
 	config := &ComponentConfig{}
 	if object != nil {
 		config = object.(*ComponentConfig)
@@ -75,34 +81,56 @@ func ResourceBuilders(parent reconciler.ResourceOwner, object interface{}) []rec
 	if config.Namespace == "" {
 		config.Namespace = defaultNamespace
 	}
-	resources := []reconciler.ResourceBuilder{
+	var modifiers []CRDModifier
+	// We don't return with an absent state since we don't want them to be removed
+	// however we return the CRDs without modified with webhook configuration to set the conversion strategy to default (None)
+	if config.IsEnabled() && !config.DisableWebhook {
+		modifiers = ConversionWebhookModifiers(parent, config)
+	}
+	resources = AppendCRDResourceBuilders(resources, modifiers...)
+	resources = AppendOperatorResourceBuilders(resources, parent, config)
+	if !config.DisableWebhook {
+		resources = AppendWebhookResourceBuilders(resources, parent, config)
+	}
+	return resources
+}
+
+func AppendOperatorResourceBuilders(rbs []reconciler.ResourceBuilder, parent reconciler.ResourceOwner, config *ComponentConfig) []reconciler.ResourceBuilder {
+	return append(rbs,
 		config.build(parent, Namespace),
 		config.build(parent, Operator),
 		config.build(parent, ClusterRole),
 		config.build(parent, ClusterRoleBinding),
 		config.build(parent, ServiceAccount),
-	}
-	// We don't return with an absent state since we don't want them to be removed
-	if config.IsEnabled() {
-		resources = append(resources,
-			func() (runtime.Object, reconciler.DesiredState, error) {
-				return CRD(config, loggingv1beta1.GroupVersion.Group, "loggings")
-			},
-			func() (runtime.Object, reconciler.DesiredState, error) {
-				return CRD(config, loggingv1beta1.GroupVersion.Group, "flows")
-			},
-			func() (runtime.Object, reconciler.DesiredState, error) {
-				return CRD(config, loggingv1beta1.GroupVersion.Group, "clusterflows")
-			},
-			func() (runtime.Object, reconciler.DesiredState, error) {
-				return CRD(config, loggingv1beta1.GroupVersion.Group, "outputs")
-			},
-			func() (runtime.Object, reconciler.DesiredState, error) {
-				return CRD(config, loggingv1beta1.GroupVersion.Group, "clusteroutputs")
-			},
-		)
-	}
-	return resources
+	)
+}
+
+func AppendCRDResourceBuilders(rbs []reconciler.ResourceBuilder, modifiers ...CRDModifier) []reconciler.ResourceBuilder {
+	return append(rbs,
+		func() (runtime.Object, reconciler.DesiredState, error) {
+			return CRD(loggingv1beta1.GroupVersion.Group, "loggings", modifiers...)
+		},
+		func() (runtime.Object, reconciler.DesiredState, error) {
+			return CRD(loggingv1beta1.GroupVersion.Group, "flows", modifiers...)
+		},
+		func() (runtime.Object, reconciler.DesiredState, error) {
+			return CRD(loggingv1beta1.GroupVersion.Group, "clusterflows", modifiers...)
+		},
+		func() (runtime.Object, reconciler.DesiredState, error) {
+			return CRD(loggingv1beta1.GroupVersion.Group, "outputs", modifiers...)
+		},
+		func() (runtime.Object, reconciler.DesiredState, error) {
+			return CRD(loggingv1beta1.GroupVersion.Group, "clusteroutputs", modifiers...)
+		},
+	)
+}
+
+func AppendWebhookResourceBuilders(rbs []reconciler.ResourceBuilder, parent reconciler.ResourceOwner, config *ComponentConfig) []reconciler.ResourceBuilder {
+	return append(rbs,
+		config.build(parent, WebhookService),
+		config.build(parent, Issuer),
+		config.build(parent, Certificate),
+	)
 }
 
 func SetupWithBuilder(builder *builder.Builder) {
@@ -117,8 +145,8 @@ func Namespace(_ reconciler.ResourceOwner, config ComponentConfig) (runtime.Obje
 	}, reconciler.StateCreated, nil
 }
 
-func CRD(config *ComponentConfig, group string, kind string) (runtime.Object, reconciler.DesiredState, error) {
-	crd := &v1beta1.CustomResourceDefinition{
+func CRD(group string, kind string, modifiers ...CRDModifier) (runtime.Object, reconciler.DesiredState, error) {
+	crd := &crdv1.CustomResourceDefinition{
 		ObjectMeta: v1.ObjectMeta{
 			Name: fmt.Sprintf("%s.%s", kind, group),
 		},
@@ -132,8 +160,17 @@ func CRD(config *ComponentConfig, group string, kind string) (runtime.Object, re
 		return nil, nil, errors.WrapIff(err, "failed to read %s crd", kind)
 	}
 
+	// apply modifiers
+	for _, modifier := range modifiers {
+		crdModified, err := modifier(crd)
+		if err != nil {
+			return nil, nil, err
+		}
+		crd = crdModified
+	}
+
 	scheme := runtime.NewScheme()
-	_ = v1beta1.AddToScheme(scheme)
+	_ = crdv1.AddToScheme(scheme)
 
 	_, _, err = serializer.NewSerializerWithOptions(serializer.DefaultMetaFactory, scheme, scheme, serializer.SerializerOptions{
 		Yaml: true,
@@ -149,7 +186,7 @@ func CRD(config *ComponentConfig, group string, kind string) (runtime.Object, re
 	crd.TypeMeta.APIVersion = ""
 
 	return crd, reconciler.DesiredStateHook(func(object runtime.Object) error {
-		current := object.(*v1beta1.CustomResourceDefinition)
+		current := object.(*crdv1.CustomResourceDefinition)
 		// simply copy the existing status over, so that we don't diff because of it
 		crd.Status = current.Status
 		return nil
@@ -163,6 +200,24 @@ func Operator(parent reconciler.ResourceOwner, config ComponentConfig) (runtime.
 	if !config.IsEnabled() {
 		return deployment, reconciler.StateAbsent, nil
 	}
+	var env []corev1.EnvVar
+	var volumeMounts []corev1.VolumeMount
+	var volumes []corev1.Volume
+	if !config.DisableWebhook {
+		env = append(env, corev1.EnvVar{Name: "ENABLE_WEBHOOKS", Value: "true"})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      parent.GetName() + WebhookNameAffix,
+			MountPath: WebhookCertDir,
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: parent.GetName() + WebhookNameAffix,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: parent.GetName() + WebhookNameAffix,
+				},
+			},
+		})
+	}
 	deployment.Spec = appsv1.DeploymentSpec{
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: config.WorkloadMetaOverrides.Merge(v1.ObjectMeta{
@@ -175,7 +230,8 @@ func Operator(parent reconciler.ResourceOwner, config ComponentConfig) (runtime.
 						Name:    "logging-operator",
 						Image:   Image,
 						Command: []string{"/manager"},
-						Args:    []string{"--enable-leader-election"},
+						Args:    OperatorArgs(config),
+						Env:     env,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("300m"),
@@ -186,8 +242,10 @@ func Operator(parent reconciler.ResourceOwner, config ComponentConfig) (runtime.
 								corev1.ResourceMemory: resource.MustParse("20Mi"),
 							},
 						},
+						VolumeMounts: volumeMounts,
 					}),
 				},
+				Volumes: volumes,
 			}),
 		},
 		Selector: &v1.LabelSelector{
@@ -298,4 +356,89 @@ func (c *ComponentConfig) labelSelector(parent reconciler.ResourceOwner) map[str
 	return map[string]string{
 		"banzaicloud.io/operator": parent.GetName() + "-logging-operator",
 	}
+}
+
+func WebhookService(parent reconciler.ResourceOwner, config ComponentConfig) (runtime.Object, reconciler.DesiredState, error) {
+	svc := &corev1.Service{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      parent.GetName() + WebhookNameAffix,
+			Namespace: config.Namespace,
+			Labels:    config.labelSelector(parent),
+		},
+	}
+	if !config.IsEnabled() {
+		return svc, reconciler.StateAbsent, nil
+	}
+
+	svc.Spec = corev1.ServiceSpec{
+		Ports: []corev1.ServicePort{
+			{
+				Name:       "conversion-webhook",
+				Port:       DefaultSecurePort,
+				TargetPort: intstr.IntOrString{IntVal: DefaultWebhookPort},
+				Protocol:   corev1.ProtocolTCP,
+			},
+		},
+		Selector: config.labelSelector(parent),
+		Type:     corev1.ServiceTypeClusterIP,
+	}
+
+	return svc, reconciler.StateCreated, nil
+}
+
+type strIfMap = map[string]interface{}
+
+func Issuer(parent reconciler.ResourceOwner, config ComponentConfig) (runtime.Object, reconciler.DesiredState, error) {
+	issuer := unstructured.Unstructured{}
+	issuer.SetAPIVersion("cert-manager.io/v1")
+	issuer.SetKind("Issuer")
+	issuer.SetName(parent.GetName() + WebhookNameAffix)
+	issuer.SetNamespace(config.Namespace)
+	issuer.SetLabels(config.labelSelector(parent))
+	issuer.Object["spec"] = strIfMap{"selfSigned": strIfMap{}}
+
+	return &issuer, reconciler.StatePresent, nil
+}
+
+func Certificate(parent reconciler.ResourceOwner, config ComponentConfig) (runtime.Object, reconciler.DesiredState, error) {
+	cert := unstructured.Unstructured{}
+	cert.SetAPIVersion("cert-manager.io/v1")
+	cert.SetKind("Certificate")
+	cert.SetName(parent.GetName() + WebhookNameAffix)
+	cert.SetNamespace(config.Namespace)
+	cert.SetLabels(config.labelSelector(parent))
+	cert.Object["spec"] = strIfMap{
+		"secretName": parent.GetName() + WebhookNameAffix,
+		"commonName": parent.GetName() + WebhookNameAffix + "-ca",
+		"isCA":       false,
+		"issuerRef": strIfMap{
+			"name": parent.GetName() + WebhookNameAffix,
+			"kind": "Issuer",
+		},
+		"dnsNames": []interface{}{
+			parent.GetName() + WebhookNameAffix,
+			parent.GetName() + WebhookNameAffix + "." + config.Namespace,
+			parent.GetName() + WebhookNameAffix + "." + config.Namespace + ".svc",
+		},
+	}
+
+	return &cert, reconciler.StatePresent, nil
+}
+
+func ConversionWebhookModifiers(parent reconciler.ResourceOwner, config *ComponentConfig) []CRDModifier {
+	return []CRDModifier{
+		ModifierConversionWebhook(k8stypes.NamespacedName{Name: parent.GetName() + WebhookNameAffix, Namespace: config.Namespace}),
+		ModifierCAInjectAnnotation(k8stypes.NamespacedName{Name: parent.GetName() + WebhookNameAffix, Namespace: config.Namespace}),
+	}
+}
+
+func OperatorArgs(config ComponentConfig) (args []string) {
+	args = append(args, "--enable-leader-election")
+	if config.WatchNamespace != "" {
+		args = append(args, "--watch-namespace", config.WatchNamespace)
+	}
+	if config.WatchLoggingName != "" {
+		args = append(args, "--watch-logging-name", config.WatchLoggingName)
+	}
+	return
 }

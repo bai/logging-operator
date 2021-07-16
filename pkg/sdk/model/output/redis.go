@@ -20,7 +20,7 @@ import (
 	"github.com/banzaicloud/logging-operator/pkg/sdk/model/types"
 )
 
-// +name:"Http"
+// +name:"Redis"
 // +weight:"200"
 type _hugoRedis interface{}
 
@@ -39,7 +39,7 @@ type _hugoRedis interface{}
 // ```
 type _docRedis interface{}
 
-// +name:"Http"
+// +name:"Redis"
 // +url:"https://github.com/fluent-plugins-nursery/fluent-plugin-redis"
 // +version:"0.3.5"
 // +description:"Sends logs to Redis endpoints."
@@ -86,12 +86,13 @@ func (c *RedisOutputConfig) ToDirective(secretLoader secret.SecretLoader, id str
 	} else {
 		redis.Params = params
 	}
-	if c.Buffer != nil {
-		if buffer, err := c.Buffer.ToDirective(secretLoader, id); err != nil {
-			return nil, err
-		} else {
-			redis.SubDirectives = append(redis.SubDirectives, buffer)
-		}
+	if c.Buffer == nil {
+		c.Buffer = &Buffer{}
+	}
+	if buffer, err := c.Buffer.ToDirective(secretLoader, id); err != nil {
+		return nil, err
+	} else {
+		redis.SubDirectives = append(redis.SubDirectives, buffer)
 	}
 	if c.Format != nil {
 		if format, err := c.Format.ToDirective(secretLoader, ""); err != nil {

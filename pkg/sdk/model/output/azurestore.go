@@ -45,10 +45,10 @@ type AzureStorage struct {
 	AzureStorageAccount *secret.Secret `json:"azure_storage_account"`
 	// Your azure storage access key
 	// +docLink:"Secret,../secret/"
-	AzureStorageAccessKey *secret.Secret `json:"azure_storage_access_key"`
+	AzureStorageAccessKey *secret.Secret `json:"azure_storage_access_key,omitempty"`
 	// Your azure storage sas token
 	// +docLink:"Secret,../secret/"
-	AzureStorageSasToken *secret.Secret `json:"azure_storage_sas_token"`
+	AzureStorageSasToken *secret.Secret `json:"azure_storage_sas_token,omitempty"`
 	// Your azure storage container
 	AzureContainer string `json:"azure_container"`
 	// Azure Instance Metadata Service API Version
@@ -78,12 +78,13 @@ func (a *AzureStorage) ToDirective(secretLoader secret.SecretLoader, id string) 
 	} else {
 		azure.Params = params
 	}
-	if a.Buffer != nil {
-		if buffer, err := a.Buffer.ToDirective(secretLoader, id); err != nil {
-			return nil, err
-		} else {
-			azure.SubDirectives = append(azure.SubDirectives, buffer)
-		}
+	if a.Buffer == nil {
+		a.Buffer = &Buffer{}
+	}
+	if buffer, err := a.Buffer.ToDirective(secretLoader, id); err != nil {
+		return nil, err
+	} else {
+		azure.SubDirectives = append(azure.SubDirectives, buffer)
 	}
 	return azure, nil
 }

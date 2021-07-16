@@ -16,6 +16,7 @@ package v1beta1
 
 import (
 	"github.com/banzaicloud/logging-operator/pkg/sdk/model/input"
+	"github.com/banzaicloud/operator-tools/pkg/typeoverride"
 	"github.com/banzaicloud/operator-tools/pkg/volume"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -36,6 +37,7 @@ type FluentdSpec struct {
 	Annotations            map[string]string `json:"annotations,omitempty"`
 	ConfigCheckAnnotations map[string]string `json:"configCheckAnnotations,omitempty"`
 	Labels                 map[string]string `json:"labels,omitempty"`
+	EnvVars                []corev1.EnvVar   `json:"envVars,omitempty"`
 	TLS                    FluentdTLS        `json:"tls,omitempty"`
 	Image                  ImageSpec         `json:"image,omitempty"`
 	DisablePvc             bool              `json:"disablePvc,omitempty"`
@@ -43,23 +45,28 @@ type FluentdSpec struct {
 	// +docLink:"volume.KubernetesVolume,https://github.com/banzaicloud/operator-tools/tree/master/docs/types"
 	BufferStorageVolume volume.KubernetesVolume `json:"bufferStorageVolume,omitempty"`
 	// Deprecated, use bufferStorageVolume
-	FluentdPvcSpec       *volume.KubernetesVolume    `json:"fluentdPvcSpec,omitempty"`
-	VolumeMountChmod     bool                        `json:"volumeMountChmod,omitempty"`
-	VolumeModImage       ImageSpec                   `json:"volumeModImage,omitempty"`
-	ConfigReloaderImage  ImageSpec                   `json:"configReloaderImage,omitempty"`
-	Resources            corev1.ResourceRequirements `json:"resources,omitempty"`
-	LivenessProbe        *corev1.Probe               `json:"livenessProbe,omitempty"`
-	LivenessDefaultCheck bool                        `json:"livenessDefaultCheck,omitempty"`
-	ReadinessProbe       *corev1.Probe               `json:"readinessProbe,omitempty"`
-	Port                 int32                       `json:"port,omitempty"`
-	Tolerations          []corev1.Toleration         `json:"tolerations,omitempty"`
-	NodeSelector         map[string]string           `json:"nodeSelector,omitempty"`
-	Affinity             *corev1.Affinity            `json:"affinity,omitempty"`
-	Metrics              *Metrics                    `json:"metrics,omitempty"`
-	Security             *Security                   `json:"security,omitempty"`
-	Scaling              *FluentdScaling             `json:"scaling,omitempty"`
-	Workers              int32                       `json:"workers,omitempty"`
-	RootDir              string                      `json:"rootDir,omitempty"`
+	FluentdPvcSpec          *volume.KubernetesVolume    `json:"fluentdPvcSpec,omitempty"`
+	VolumeMountChmod        bool                        `json:"volumeMountChmod,omitempty"`
+	VolumeModImage          ImageSpec                   `json:"volumeModImage,omitempty"`
+	ConfigReloaderImage     ImageSpec                   `json:"configReloaderImage,omitempty"`
+	Resources               corev1.ResourceRequirements `json:"resources,omitempty"`
+	ConfigCheckResources    corev1.ResourceRequirements `json:"configCheckResources,omitempty"`
+	ConfigReloaderResources corev1.ResourceRequirements `json:"configReloaderResources,omitempty"`
+	LivenessProbe           *corev1.Probe               `json:"livenessProbe,omitempty"`
+	LivenessDefaultCheck    bool                        `json:"livenessDefaultCheck,omitempty"`
+	ReadinessProbe          *corev1.Probe               `json:"readinessProbe,omitempty"`
+	Port                    int32                       `json:"port,omitempty"`
+	Tolerations             []corev1.Toleration         `json:"tolerations,omitempty"`
+	NodeSelector            map[string]string           `json:"nodeSelector,omitempty"`
+	Affinity                *corev1.Affinity            `json:"affinity,omitempty"`
+	Metrics                 *Metrics                    `json:"metrics,omitempty"`
+	BufferVolumeMetrics     *Metrics                    `json:"bufferVolumeMetrics,omitempty"`
+	BufferVolumeImage       ImageSpec                   `json:"bufferVolumeImage,omitempty"`
+	BufferVolumeArgs        []string                    `json:"bufferVolumeArgs,omitempty"`
+	Security                *Security                   `json:"security,omitempty"`
+	Scaling                 *FluentdScaling             `json:"scaling,omitempty"`
+	Workers                 int32                       `json:"workers,omitempty"`
+	RootDir                 string                      `json:"rootDir,omitempty"`
 	// +kubebuilder:validation:enum=fatal,error,warn,info,debug,trace
 	LogLevel string `json:"logLevel,omitempty"`
 	// Ignore same log lines
@@ -72,8 +79,9 @@ type FluentdSpec struct {
 	// +kubebuilder:validation:enum=stdout,null
 	FluentLogDestination string `json:"fluentLogDestination,omitempty"`
 	// FluentOutLogrotate sends fluent's stdout to file and rotates it
-	FluentOutLogrotate *FluentOutLogrotate       `json:"fluentOutLogrotate,omitempty"`
-	ForwardInputConfig *input.ForwardInputConfig `json:"forwardInputConfig,omitempty"`
+	FluentOutLogrotate      *FluentOutLogrotate          `json:"fluentOutLogrotate,omitempty"`
+	ForwardInputConfig      *input.ForwardInputConfig    `json:"forwardInputConfig,omitempty"`
+	ServiceAccountOverrides *typeoverride.ServiceAccount `json:"serviceAccount,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
@@ -89,8 +97,9 @@ type FluentOutLogrotate struct {
 
 // FluentdScaling enables configuring the scaling behaviour of the fluentd statefulset
 type FluentdScaling struct {
-	Replicas            int    `json:"replicas,omitempty"`
-	PodManagementPolicy string `json:"podManagementPolicy,omitempty"`
+	Replicas            int                `json:"replicas,omitempty"`
+	PodManagementPolicy string             `json:"podManagementPolicy,omitempty"`
+	Drain               FluentdDrainConfig `json:"drain,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
@@ -100,4 +109,14 @@ type FluentdTLS struct {
 	Enabled    bool   `json:"enabled"`
 	SecretName string `json:"secretName,omitempty"`
 	SharedKey  string `json:"sharedKey,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+
+// FluentdDrainConfig enables configuring the drain behavior when scaling down the fluentd statefulset
+type FluentdDrainConfig struct {
+	// Should buffers on persistent volumes left after scaling down the statefulset be drained
+	Enabled bool `json:"enabled,omitempty"`
+	// Container image to use for the drain watch sidecar
+	Image ImageSpec `json:"image,omitempty"`
 }

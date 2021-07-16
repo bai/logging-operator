@@ -80,6 +80,7 @@ type LoggingStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=loggings,scope=Cluster,categories=logging-all
+// +kubebuilder:storageversion
 
 // Logging is the Schema for the loggings API
 type Logging struct {
@@ -110,10 +111,13 @@ type DefaultFlowSpec struct {
 }
 
 const (
-	DefaultFluentbitImageRepository = "fluent/fluent-bit"
-	DefaultFluentbitImageTag        = "1.7.3"
-	DefaultFluentdImageRepository   = "ghcr.io/banzaicloud/fluentd"
-	DefaultFluentdImageTag          = "v1.11.5-alpine-12"
+	DefaultFluentbitImageRepository         = "fluent/fluent-bit"
+	DefaultFluentbitImageTag                = "1.7.9"
+	DefaultFluentdImageRepository           = "ghcr.io/banzaicloud/fluentd"
+	DefaultFluentdImageTag                  = "v1.12.4-alpine-3"
+	DefaultFluentdBufferStorageVolumeName   = "fluentd-buffer"
+	DefaultFluentdDrainWatchImageRepository = "ghcr.io/banzaicloud/fluentd-drain-watch"
+	DefaultFluentdDrainWatchImageTag        = "v0.0.1"
 )
 
 // SetDefaults fills empty attributes
@@ -194,7 +198,7 @@ func (l *Logging) SetDefaults() error {
 				l.Spec.FluentdSpec.BufferStorageVolume.PersistentVolumeClaim.PersistentVolumeClaimSpec.VolumeMode = persistentVolumeModePointer(v1.PersistentVolumeFilesystem)
 			}
 			if l.Spec.FluentdSpec.BufferStorageVolume.PersistentVolumeClaim.PersistentVolumeSource.ClaimName == "" {
-				l.Spec.FluentdSpec.BufferStorageVolume.PersistentVolumeClaim.PersistentVolumeSource.ClaimName = "fluentd-buffer"
+				l.Spec.FluentdSpec.BufferStorageVolume.PersistentVolumeClaim.PersistentVolumeSource.ClaimName = DefaultFluentdBufferStorageVolumeName
 			}
 		}
 		if l.Spec.FluentdSpec.VolumeModImage.Repository == "" {
@@ -214,6 +218,15 @@ func (l *Logging) SetDefaults() error {
 		}
 		if l.Spec.FluentdSpec.ConfigReloaderImage.PullPolicy == "" {
 			l.Spec.FluentdSpec.ConfigReloaderImage.PullPolicy = "IfNotPresent"
+		}
+		if l.Spec.FluentdSpec.BufferVolumeImage.Repository == "" {
+			l.Spec.FluentdSpec.BufferVolumeImage.Repository = "quay.io/prometheus/node-exporter"
+		}
+		if l.Spec.FluentdSpec.BufferVolumeImage.Tag == "" {
+			l.Spec.FluentdSpec.BufferVolumeImage.Tag = "v1.1.2"
+		}
+		if l.Spec.FluentdSpec.BufferVolumeImage.PullPolicy == "" {
+			l.Spec.FluentdSpec.BufferVolumeImage.PullPolicy = "IfNotPresent"
 		}
 		if l.Spec.FluentdSpec.Resources.Limits == nil {
 			l.Spec.FluentdSpec.Resources.Limits = v1.ResourceList{
@@ -238,6 +251,15 @@ func (l *Logging) SetDefaults() error {
 		}
 		if l.Spec.FluentdSpec.Scaling.PodManagementPolicy == "" {
 			l.Spec.FluentdSpec.Scaling.PodManagementPolicy = "OrderedReady"
+		}
+		if l.Spec.FluentdSpec.Scaling.Drain.Image.Repository == "" {
+			l.Spec.FluentdSpec.Scaling.Drain.Image.Repository = DefaultFluentdDrainWatchImageRepository
+		}
+		if l.Spec.FluentdSpec.Scaling.Drain.Image.Tag == "" {
+			l.Spec.FluentdSpec.Scaling.Drain.Image.Tag = DefaultFluentdDrainWatchImageTag
+		}
+		if l.Spec.FluentdSpec.Scaling.Drain.Image.PullPolicy == "" {
+			l.Spec.FluentdSpec.Scaling.Drain.Image.PullPolicy = "IfNotPresent"
 		}
 		if l.Spec.FluentdSpec.FluentLogDestination == "" {
 			l.Spec.FluentdSpec.FluentLogDestination = "null"

@@ -207,6 +207,8 @@ type ElasticsearchOutput struct {
 	DefaultElasticsearchVersion string `json:"default_elasticsearch_version,omitempty"`
 	// This parameter adds additional headers to request. Example: {"token":"secret"} (default: {})
 	CustomHeaders string `json:"custom_headers,omitempty"`
+	// api_key parameter adds authentication header.
+	ApiKey *secret.Secret `json:"api_key,omitempty"`
 	// By default, the error logger won't record the reason for a 400 error from the Elasticsearch API unless you set log_level to debug. However, this results in a lot of log spam, which isn't desirable if all you want is the 400 error reasons. You can set this true to capture the 400 error reasons without all the other debug logs. (default: false)
 	LogEs400Reason bool `json:"log_es_400_reason,omitempty"`
 	// By default, record body is wrapped by 'doc'. This behavior can not handle update script requests. You can set this to suppress doc wrapping and allow record body to be untouched. (default: false)
@@ -234,10 +236,17 @@ type ElasticsearchOutput struct {
 	IlmPolicy string `json:"ilm_policy,omitempty"`
 	// Specify whether overwriting ilm policy or not.
 	IlmPolicyOverwrite bool `json:"ilm_policy_overwrite,omitempty"`
+	// Use @type elasticsearch_data_stream
+	DataStreamEnable *bool `json:"data_stream_enable,omitempty"`
+	// You can specify Elasticsearch data stream name by this parameter. This parameter is mandatory for elasticsearch_data_stream. There are some limitations about naming rule. For more details https://www.elastic.co/guide/en/elasticsearch/reference/master/indices-create-data-stream.html#indices-create-data-stream-api-path-params
+	DataStreamName string `json:"data_stream_name,omitempty"`
 }
 
 func (e *ElasticsearchOutput) ToDirective(secretLoader secret.SecretLoader, id string) (types.Directive, error) {
-	const pluginType = "elasticsearch"
+	pluginType := "elasticsearch"
+	if e.DataStreamEnable != nil && *e.DataStreamEnable {
+		pluginType = "elasticsearch_data_stream"
+	}
 	elasticsearch := &types.OutputPlugin{
 		PluginMeta: types.PluginMeta{
 			Type:      pluginType,
@@ -251,12 +260,13 @@ func (e *ElasticsearchOutput) ToDirective(secretLoader secret.SecretLoader, id s
 	} else {
 		elasticsearch.Params = params
 	}
-	if e.Buffer != nil {
-		if buffer, err := e.Buffer.ToDirective(secretLoader, id); err != nil {
-			return nil, err
-		} else {
-			elasticsearch.SubDirectives = append(elasticsearch.SubDirectives, buffer)
-		}
+	if e.Buffer == nil {
+		e.Buffer = &Buffer{}
+	}
+	if buffer, err := e.Buffer.ToDirective(secretLoader, id); err != nil {
+		return nil, err
+	} else {
+		elasticsearch.SubDirectives = append(elasticsearch.SubDirectives, buffer)
 	}
 	return elasticsearch, nil
 }

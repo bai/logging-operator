@@ -148,11 +148,11 @@ type S3OutputConfig struct {
 	Buffer *Buffer `json:"buffer,omitempty"`
 	// +docLink:"Format,../format/"
 	Format *Format `json:"format,omitempty"`
-	// +docLink:"Assume Role Credentials,#assume_role_credentials"
+	// +docLink:"Assume Role Credentials,#assume-role-credentials"
 	AssumeRoleCredentials *S3AssumeRoleCredentials `json:"assume_role_credentials,omitempty"`
-	// +docLink:"Instance Profile Credentials,#instance_profile_credentials"
+	// +docLink:"Instance Profile Credentials,#instance-profile-credentials"
 	InstanceProfileCredentials *S3InstanceProfileCredentials `json:"instance_profile_credentials,omitempty"`
-	// +docLink:"Shared Credentials,#shared_credentials"
+	// +docLink:"Shared Credentials,#shared-credentials"
 	SharedCredentials *S3SharedCredentials `json:"shared_credentials,omitempty"`
 	// One-eye format trigger (default:false)
 	OneEyeFormat bool `json:"oneeye_format,omitempty"`
@@ -235,12 +235,13 @@ func (c *S3OutputConfig) ToDirective(secretLoader secret.SecretLoader, id string
 
 	s3.Params = params
 
-	if c.Buffer != nil {
-		if buffer, err := c.Buffer.ToDirective(secretLoader, id); err != nil {
-			return nil, err
-		} else {
-			s3.SubDirectives = append(s3.SubDirectives, buffer)
-		}
+	if c.Buffer == nil {
+		c.Buffer = &Buffer{}
+	}
+	if buffer, err := c.Buffer.ToDirective(secretLoader, id); err != nil {
+		return nil, err
+	} else {
+		s3.SubDirectives = append(s3.SubDirectives, buffer)
 	}
 	if c.Format != nil {
 		if format, err := c.Format.ToDirective(secretLoader, ""); err != nil {

@@ -108,7 +108,7 @@ type KafkaOutputConfig struct {
 	// Maximum value of total message size to be included in one batch transmission. (default: 4096).
 	KafkaAggMaxBytes int `json:"kafka_agg_max_bytes,omitempty"`
 	// Maximum number of messages to include in one batch transmission. (default: nil).
-	KafkaAggMaxMessages string `json:"kafka_agg_max_messages,omitempty"`
+	KafkaAggMaxMessages int `json:"kafka_agg_max_messages,omitempty"`
 	// Discard the record where Kafka DeliveryFailed occurred (default: false)
 	DiscardKafkaDeliveryFailed bool `json:"discard_kafka_delivery_failed,omitempty"`
 	// System's CA cert store (default: false)
@@ -144,13 +144,15 @@ func (e *KafkaOutputConfig) ToDirective(secretLoader secret.SecretLoader, id str
 	} else {
 		kafka.Params = params
 	}
-	if e.Buffer != nil {
-		if buffer, err := e.Buffer.ToDirective(secretLoader, id); err != nil {
-			return nil, err
-		} else {
-			kafka.SubDirectives = append(kafka.SubDirectives, buffer)
-		}
+	if e.Buffer == nil {
+		e.Buffer = &Buffer{}
 	}
+	if buffer, err := e.Buffer.ToDirective(secretLoader, id); err != nil {
+		return nil, err
+	} else {
+		kafka.SubDirectives = append(kafka.SubDirectives, buffer)
+	}
+
 	if e.Format != nil {
 		if format, err := e.Format.ToDirective(secretLoader, ""); err != nil {
 			return nil, err
